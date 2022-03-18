@@ -23,24 +23,24 @@ void RL2D::loadGM(const string& filename)
     global_kdtree.setInputCloud(global_map);
     has_map = true;
 
-    pcl::PointCloud<pcl::PointXYZ> global_map_3D;
-    pcl::PointXYZ tpt;
+    // pcl::PointCloud<pcl::PointXYZ> global_map_3D;
+    // pcl::PointXYZ tpt;
 
-    global_map_3D.points.clear();
-    global_map_3D.width  = global_map->points.size();
-    global_map_3D.height = 41;
-    global_map_3D.points.resize( global_map->points.size() * 41);
-    int index = 0;
-    for(int i = 0 ; i < global_map->points.size() ; i++)
-    {
-        for(double z = 0.0; z < 0.8 ; z += 0.02)
-        {
-            pcl::PointXYZ tpt = global_map->points[i];
-            tpt.z = z;
-            global_map_3D.points[index++] = tpt;
-        } 
-    }
-    pcl::io::savePCDFileASCII ("/home/lantern/ROS_workspace/RMLocalization2D/src/localization2D/map/RM3D_transform.pcd", global_map_3D); //将点云保存到PCD文件中
+    // global_map_3D.points.clear();
+    // global_map_3D.width  = global_map->points.size();
+    // global_map_3D.height = 41;
+    // global_map_3D.points.resize( global_map->points.size() * 41);
+    // int index = 0;
+    // for(int i = 0 ; i < global_map->points.size() ; i++)
+    // {
+    //     for(double z = 0.0; z < 0.8 ; z += 0.02)
+    //     {
+    //         pcl::PointXYZ tpt = global_map->points[i];
+    //         tpt.z = z;
+    //         global_map_3D.points[index++] = tpt;
+    //     } 
+    // }
+    // pcl::io::savePCDFileASCII (map_filepath, global_map_3D); //将点云保存到PCD文件中
 
 
     cout << "Get Map!" << endl;
@@ -84,6 +84,26 @@ void RL2D::lidarCallback(const sensor_msgs::PointCloud2& lidar_msg)
     sc_pub.publish(scan_map);
 }
 
+void RL2D::imuCallback( const sensor_msgs::Imu& imu_msg )
+{ 
+    if(rec_first_imu == false) { 
+        last_imu_sec  = imu_msg.header.stamp.sec;
+        last_imu_nsec = imu_msg.header.stamp.nsec;
+        rec_first_imu = true; 
+        return;
+    }
+    else {
+        int dsec  = imu_msg.header.stamp.sec  - last_imu_sec;
+        int dnsec = imu_msg.header.stamp.nsec - last_imu_nsec;
+        dnsec = (dnsec < 0) ? 10e9+dnsec : dnsec;
+        double dt = dsec + dnsec/(1000000000.0);
+        yaw += imu_msg.angular_velocity.z * dt;
+        updatePose(position ,yaw);
+        last_imu_sec  = imu_msg.header.stamp.sec;
+        last_imu_nsec = imu_msg.header.stamp.nsec;
+    }
+}
+
 void RL2D::extractPose()
 {
     position = Tlw.block<2,1>(0,2);
@@ -112,7 +132,7 @@ void RL2D::initPoseCallBack(const nav_msgs::Odometry& msg)
     yaw = 2 * atan2( msg.pose.pose.orientation.z, msg.pose.pose.orientation.w );
 }
 
-void RL2D::poseCallBack(const ros::TimerEvent& e)
+void RL2D::poseOutputStream(const ros::TimerEvent& e)
 {
     extractPose();
     cout<<"yaw = "<< yaw <<"  t = "<<position<<endl;
@@ -213,15 +233,25 @@ void RL2D::ICP2D()
 void RL2D::init(ros::NodeHandle& nh)
 {
     //this->nh = nh;
-    has_map  = false;
+    has_map         = false;
+    rec_first_imu   = false;
     Tlw      = Matrix3d::Identity();
+
+    nh.param("map_filepath",map_filepath );
+    nh.param("init_x", position(0) ,-2.02);
+    nh.param("init_y", position(1) ,3.84);
+    nh.param("init_yaw", yaw ,0.0);
+
     gm_sub   = nh.subscribe("/global_map", 5, &RL2D::globalMapCallBack, this); 
     ls_sub   = nh.subscribe("/scan_3d", 5, &RL2D::lidarCallback, this); 
+    imu_sub  = nh.subscribe("/mavros/imu/data", 5 ,&RL2D::imuCallback, this);
+
     pose_pub = nh.advertise<nav_msgs::Odometry>("/odom", 5);
     gm_pub   = nh.advertise<sensor_msgs::PointCloud2>("/global_map", 5);
     sc_pub   = nh.advertise<sensor_msgs::PointCloud2>("/scan_map", 5);
 
-    timer    = nh.createTimer(ros::Duration(0.01), &RL2D::poseCallBack, this);
+    timer    = nh.createTimer(ros::Duration(0.01), &RL2D::poseOutputStream, this);
+
 }
 
 int main (int argc, char** argv) 
@@ -232,8 +262,8 @@ int main (int argc, char** argv)
     RL2D::Ptr steve;
     steve.reset(new RL2D);
     steve -> init(nh);
-    steve -> loadGM("/home/lantern/ROS_workspace/RMLocalization2D/src/localization2D/map/RM_transform.pcd");
-    steve -> updatePose( Vector2d(-2.02, 3.84) , 0);
+    steve -> loadGM( "/home/lantern/ROS_workspace/RMLocalization/src/RMLocalization/localization2D/data/RM_transform.pcd" );
+    steve -> updatePose( steve->position , steve->yaw );
 
     ros::spin();
     return 0;
