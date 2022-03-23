@@ -76,8 +76,15 @@ void RL2D::lidarCallback(const sensor_msgs::LaserScan& lidar_msg)
     if(!has_map){return;}
 
     sensor_msgs::PointCloud2 lidar_msg_c;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr lidar_scan_raw(new pcl::PointCloud<pcl::PointXYZ>);
     projector_.transformLaserScanToPointCloud("laser", lidar_msg, lidar_msg_c, tfListener_);
-    pcl::fromROSMsg(lidar_msg_c, lidar_scan);
+    pcl::fromROSMsg(lidar_msg_c, *lidar_scan_raw);
+
+
+    Static.setInputCloud (lidar_scan_raw);                           //设置待滤波的点云
+    Static.setMeanK (10);                               //设置在进行统计时考虑查询点临近点数
+    Static.setStddevMulThresh (0.2);                      //设置判断是否为离群点的阀值
+    Static.filter (lidar_scan);                    //存储
 
     // pcl::fromROSMsg(lidar_msg, lidar_scan);
 
@@ -159,6 +166,18 @@ void RL2D::poseOutputStream(const ros::TimerEvent& e)
     gm_pub.publish(gl_map);
 }
 
+Vector2d RL2D::findNearestLineSeg(Vector2d p, double& min_dis)
+{
+    double min_dist = 10e9 , dist;
+    int index = 0;
+    for(int i = 0 ; i < map_segs.size(); i++){
+        dist = map_segs[i].getDis(p);
+        if(dist < min_dist){min_dist = dist; index = i;}
+    }
+    min_dis = min_dist;
+    return map_segs[index].getProjection(p);
+}
+
 void RL2D::ICP2D()
 {
     Matrix2d R = Matrix2d::Identity();
@@ -180,7 +199,7 @@ void RL2D::ICP2D()
     Matrix2d S;
 
     int n = 0;
-    int iter_time = 10;
+    int iter_time = 5;
     while(iter_time--)
     {
         n = 0;
@@ -192,19 +211,31 @@ void RL2D::ICP2D()
             searchPoint = lidar_scan_global.points[i];
             s_point(0) = searchPoint.x;
             s_point(1) = searchPoint.y;
-            if(s_point.norm() < 0.5){continue;}
-            // if(s_point.norm() > 9.0){continue;}
-            if( global_kdtree.nearestKSearch(searchPoint, 1, pointIdxNKNSearch, pointNKNSquaredDistance) > 0 )
-            {
-                if( pointNKNSquaredDistance[0] > 0.8){continue;}
-                p_point(0) = global_map -> points[ pointIdxNKNSearch[0] ].x;
-                p_point(1) = global_map -> points[ pointIdxNKNSearch[0] ].y;
+            // if((s_point - position).norm() < 0.3){continue;}
+            // if((s_point - position).norm() > 7.0){continue;}
+            double min_dist;
+            // ros::Time t1 = ros::Time::now();
+            p_point = findNearestLineSeg(s_point, min_dist);
+            // ros::Time t2 = ros::Time::now();
+            // cout<<"COST t = " << t2.toSec() - t1.toSec()<<endl;
+            if( min_dist > 0.8){continue;}
+
+            p_center = (n*p_center + p_point)/(n+1);
+            n++;
+            pp.reset( new PointPair(p_point, s_point - lsg_center) );
+            pps.push_back( pp );
+
+            // if( global_kdtree.nearestKSearch(searchPoint, 1, pointIdxNKNSearch, pointNKNSquaredDistance) > 0 )
+            // {
+            //     if( pointNKNSquaredDistance[0] > 0.8){continue;}
+            //     p_point(0) = global_map -> points[ pointIdxNKNSearch[0] ].x;
+            //     p_point(1) = global_map -> points[ pointIdxNKNSearch[0] ].y;
                 
-                p_center = (n*p_center + p_point)/(n+1);
-                n++;
-                pp.reset( new PointPair(p_point, s_point - lsg_center) );
-                pps.push_back( pp );
-            }
+            //     p_center = (n*p_center + p_point)/(n+1);
+            //     n++;
+            //     pp.reset( new PointPair(p_point, s_point - lsg_center) );
+            //     pps.push_back( pp );
+            // }
         }
 
         for(int i = 0 ; i < pps.size(); i++)
@@ -251,6 +282,42 @@ void RL2D::init(ros::NodeHandle& nh)
     nh.param("init_x", position(0) ,2.02);
     nh.param("init_y", position(1) ,-3.84);
     nh.param("init_yaw", yaw ,0.0);
+
+    //地图边界
+    map_segs.push_back(MapLineSeg( Vector2d(2.24, -4.04) , Vector2d(2.24, 4.04) ));  
+    map_segs.push_back(MapLineSeg( Vector2d(2.24, 4.04) , Vector2d(-2.24, 4.04) ));
+    map_segs.push_back(MapLineSeg( Vector2d(-2.24, 4.04) , Vector2d(-2.24, -4.04) ));
+    map_segs.push_back(MapLineSeg( Vector2d(-2.24, -4.04) , Vector2d(2.24, -4.04) ));
+
+    //四个大障碍块
+    map_segs.push_back(MapLineSeg( Vector2d(1.35, -0.5) , Vector2d(1.15, -0.5) ));  
+    map_segs.push_back(MapLineSeg( Vector2d(1.15, -0.5) , Vector2d(1.15, 0.5) ));
+    map_segs.push_back(MapLineSeg( Vector2d(1.15, 0.5) , Vector2d(1.35, 0.5) ));
+    map_segs.push_back(MapLineSeg( Vector2d(1.35, 0.5) , Vector2d(1.35, -0.5) ));
+
+    map_segs.push_back(MapLineSeg( Vector2d(-1.35, -0.5) , Vector2d(-1.15, -0.5) ));  
+    map_segs.push_back(MapLineSeg( Vector2d(-1.15, -0.5) , Vector2d(-1.15, 0.5) ));
+    map_segs.push_back(MapLineSeg( Vector2d(-1.15, 0.5) ,  Vector2d(-1.35, 0.5) ));
+    map_segs.push_back(MapLineSeg( Vector2d(-1.35, 0.5) ,  Vector2d(-1.35, -0.5) ));
+
+    map_segs.push_back(MapLineSeg( Vector2d(0.1, -2.54) , Vector2d(-0.1, -2.54) ));  
+    map_segs.push_back(MapLineSeg( Vector2d(-0.1, -2.54) , Vector2d(-0.1, -1.54) ));
+    map_segs.push_back(MapLineSeg( Vector2d(-0.1, -1.54) ,  Vector2d(0.1, -1.54) ));
+    map_segs.push_back(MapLineSeg( Vector2d(0.1, -1.54) ,  Vector2d(0.1, -2.54) ));
+
+
+    map_segs.push_back(MapLineSeg( Vector2d(0.1,  2.54) , Vector2d(-0.1, 2.54) ));  
+    map_segs.push_back(MapLineSeg( Vector2d(-0.1, 2.54) , Vector2d(-0.1, 1.54) ));
+    map_segs.push_back(MapLineSeg( Vector2d(-0.1, 1.54) ,  Vector2d(0.1, 1.54) ));
+    map_segs.push_back(MapLineSeg( Vector2d(0.1,  1.54) ,  Vector2d(0.1, 2.54) ));
+
+    //一个小障碍块
+    map_segs.push_back(MapLineSeg( Vector2d(0,  0.15) , Vector2d(0.15, 0) ));  
+    map_segs.push_back(MapLineSeg( Vector2d(0.15, 0) , Vector2d(0, -0.15) ));
+    map_segs.push_back(MapLineSeg( Vector2d(0, -0.15) ,  Vector2d(-0.15, 0) ));
+    map_segs.push_back(MapLineSeg( Vector2d(-0.15, 0) ,  Vector2d(0,  0.15) ));
+
+
 
     gm_sub   = nh.subscribe("/global_map", 5, &RL2D::globalMapCallBack, this); 
     ls_sub   = nh.subscribe("/scan", 5, &RL2D::lidarCallback, this); 

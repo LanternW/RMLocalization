@@ -8,6 +8,7 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 
 #include <tf/transform_listener.h>
 #include <laser_geometry/laser_geometry.h>
@@ -30,6 +31,46 @@ public:
     typedef shared_ptr<PointPair> Ptr;
 };
 
+class MapLineSeg
+{
+public:
+    MapLineSeg(Vector2d a ,Vector2d b) { A = a; B = b; AB = b-a; length = AB.norm(); }
+    double getDis(Vector2d point){
+        Vector2d AP = point - A;
+        double r    = ( AP.dot(AB) ) / (length*length);
+        if(r <= 0) {
+            return AP.norm();
+        }
+        else if( r >= 1) {
+            return (point - B).norm();
+        }
+        else {
+            Vector2d C = A + r*AB;
+            return (point - C).norm();
+        }
+    }
+    Vector2d getProjection(Vector2d point){
+        Vector2d AP = point - A;
+        double r    = ( AP.dot(AB) ) / (length*length);
+        if(r <= 0) {
+            return A;
+        }
+        else if( r >= 1) {
+            return B;
+        }
+        else {
+            Vector2d C = A + r*AB;
+            return C;
+        }
+    }
+
+public:
+    Vector2d A;
+    Vector2d B;
+    Vector2d AB;
+    double length;
+};
+
 class RL2D
 {
 
@@ -41,6 +82,8 @@ public:
     pcl::KdTreeFLANN<pcl::PointXYZ> global_kdtree;
     pcl::PointCloud<pcl::PointXYZ> lidar_scan;
     pcl::PointCloud<pcl::PointXYZ> lidar_scan_global;
+    pcl::StatisticalOutlierRemoval<pcl::PointXYZ> Static;   //统计滤波器对象
+
     Vector2d lsg_center;
 
     ros::Subscriber gm_sub;
@@ -77,6 +120,12 @@ public:
     void extractPose();
     void poseOutputStream(const ros::TimerEvent& e);
     void ICP2D();
+
+    Vector2d findNearestLineSeg(Vector2d p, double& min_dis);
+
+private:
+    vector<MapLineSeg> map_segs;
+
 
 public:
     typedef shared_ptr<RL2D> Ptr;
