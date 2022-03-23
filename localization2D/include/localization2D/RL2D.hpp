@@ -1,5 +1,6 @@
 #include <ros/ros.h> 
 #include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/LaserScan.h>
 #include <sensor_msgs/Imu.h>
 #include <nav_msgs/Odometry.h>
 
@@ -7,6 +8,9 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/kdtree/kdtree_flann.h>
+
+#include <tf/transform_listener.h>
+#include <laser_geometry/laser_geometry.h>
 
 #include <Eigen/Eigen>
 
@@ -47,6 +51,10 @@ public:
     ros::Publisher sc_pub;
     ros::Timer timer;
 
+
+    laser_geometry::LaserProjection projector_;
+    tf::TransformListener tfListener_;
+
     Vector2d position;
     double yaw;
     Matrix3d Tlw;
@@ -61,7 +69,7 @@ public:
     void init(ros::NodeHandle& nh);
     void loadGM(const string& filename);
     void globalMapCallBack(const sensor_msgs::PointCloud2& global_map_msg);
-    void lidarCallback(const sensor_msgs::PointCloud2& lidar_msg);
+    void lidarCallback(const sensor_msgs::LaserScan& lidar_msg);
     void imuCallback( const sensor_msgs::Imu& imu_msg );
     void initPoseCallBack(const nav_msgs::Odometry& msg);
     void updatePose(Vector2d pos, double yaw);
