@@ -59,6 +59,10 @@ void RL2D::updateLSG()
         pt(0) = lidar_scan.points[i].x;
         pt(1) = -lidar_scan.points[i].y;
         pt(2) = 1;
+
+        if(abs(pt(0)) < 0.18) {continue;}
+        if(pt(1) < 0.1 && pt(1) > -0.3) {continue;}
+
         pt    = Tlw * pt; 
 
         p.x = pt(0);
@@ -90,7 +94,10 @@ void RL2D::lidarCallback(const sensor_msgs::LaserScan& lidar_msg)
 
     updateLSG();
     // //cout<<"lc = "<<lsg_center<<endl;
+    ros::Time t1 = ros::Time::now();
     ICP2D();
+    ros::Time t2 = ros::Time::now();
+    std::cout<<" icp cost = "<< 1000 * (t2.toSec() - t1.toSec()) <<" ms"<<std::endl;
     sensor_msgs::PointCloud2 scan_map;
     pcl::toROSMsg(lidar_scan_global, scan_map);
     scan_map.header.frame_id = "world";
@@ -206,6 +213,7 @@ void RL2D::ICP2D()
         W = Matrix2d::Zero();
         pps.clear();
         p_center = Vector2d::Zero();
+        q_center = Vector2d::Zero();
         for(int i = 0 ; i < lidar_scan_global.points.size() ; i++)
         {
             searchPoint = lidar_scan_global.points[i];
@@ -218,11 +226,12 @@ void RL2D::ICP2D()
             p_point = findNearestLineSeg(s_point, min_dist);
             // ros::Time t2 = ros::Time::now();
             // cout<<"COST t = " << t2.toSec() - t1.toSec()<<endl;
-            if( min_dist > 0.8){continue;}
+            if( min_dist > 0.5){continue;}
 
             p_center = (n*p_center + p_point)/(n+1);
+            q_center = (n*q_center + s_point)/(n+1);
             n++;
-            pp.reset( new PointPair(p_point, s_point - lsg_center) );
+            pp.reset( new PointPair(p_point, s_point) );
             pps.push_back( pp );
 
             // if( global_kdtree.nearestKSearch(searchPoint, 1, pointIdxNKNSearch, pointNKNSquaredDistance) > 0 )
@@ -249,7 +258,7 @@ void RL2D::ICP2D()
         //S = U.inverse() * W * V.transpose().inverse();
         R = U*V.transpose();
         if(R.determinant() < 0){R = -R;}
-        t = p_center - R*lsg_center;
+        t = p_center - R*q_center;
 
         T.block<2,2>(0,0) = R;
         T.block<2,1>(0,2) = t;
@@ -268,6 +277,13 @@ void RL2D::ICP2D()
 }
 
 
+void RL2D::ICPStream(const ros::TimerEvent& e)
+{
+    updateLSG();
+    ICP2D();
+}
+
+
 
 void RL2D::init(ros::NodeHandle& nh)
 {
@@ -279,8 +295,8 @@ void RL2D::init(ros::NodeHandle& nh)
     tfListener_.setExtrapolationLimit(ros::Duration(0.1));
 
     nh.param("map_filepath",map_filepath );
-    nh.param("init_x", position(0) ,2.02);
-    nh.param("init_y", position(1) ,-3.84);
+    nh.param("init_x", position(0) ,-2.02);
+    nh.param("init_y", position(1) ,3.84);
     nh.param("init_yaw", yaw ,0.0);
 
     //地图边界
@@ -327,7 +343,8 @@ void RL2D::init(ros::NodeHandle& nh)
     gm_pub   = nh.advertise<sensor_msgs::PointCloud2>("/global_map", 5);
     sc_pub   = nh.advertise<sensor_msgs::PointCloud2>("/scan_map", 5);
 
-    timer    = nh.createTimer(ros::Duration(0.01), &RL2D::poseOutputStream, this);
+    timer     = nh.createTimer(ros::Duration(0.01), &RL2D::poseOutputStream, this);
+    // icp_timer = nh.createTimer(ros::Duration(0.01), &RL2D::ICPStream, this);
 
 }
 

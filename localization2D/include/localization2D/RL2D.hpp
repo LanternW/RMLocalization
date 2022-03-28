@@ -19,6 +19,7 @@ using namespace std;
 using namespace Eigen;
 
 Vector2d p_center;
+Vector2d q_center;
 
 class PointPair
 {
@@ -26,7 +27,7 @@ public:
     PointPair(Vector2d p_, Vector2d q_){p = p_; q = q_;}
     Vector2d p;
     Vector2d q;
-    Matrix2d getW(){ return (p - p_center) * q.transpose(); }
+    Matrix2d getW(){ return (p - p_center) * (q - q_center).transpose(); }
 public:
     typedef shared_ptr<PointPair> Ptr;
 };
@@ -93,6 +94,7 @@ public:
     ros::Publisher gm_pub;
     ros::Publisher sc_pub;
     ros::Timer timer;
+    ros::Timer icp_timer;
 
 
     laser_geometry::LaserProjection projector_;
@@ -119,6 +121,7 @@ public:
     void updateLSG();
     void extractPose();
     void poseOutputStream(const ros::TimerEvent& e);
+    void ICPStream(const ros::TimerEvent& e);
     void ICP2D();
 
     Vector2d findNearestLineSeg(Vector2d p, double& min_dis);
