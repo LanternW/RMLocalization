@@ -1,0 +1,17 @@
+<launch>
+
+    <arg name="map_filepath" default="/home/lantern/ROS_workspace/RMLocalization/src/RMLocalization/localization2D/data/RM_transform.pcd"/>
+
+    <node pkg="localization2D" name="rm_localization" type="rl_node" output="screen">
+        <param name="map_filepath" value="$(arg map_filepath)"/>
+
+        <param name="init_x"    value="-2.02"/>
+        <param name="init_y"    value="3.84"/>
+        <param name="init_yaw"  value="0.0"/>
+
+    </node>
+
+    <!-- rviz -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find localization2D)/data/default.rviz" required="true" />
+
+</launch>
